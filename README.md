@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Cloudflare Workers](https://img.shields.io/badge/Platform-Cloudflare%20Workers-f38020.svg?logo=cloudflare)](https://workers.cloudflare.com/)
 
-**[🚀 View Live Demo](https://amirhosseinjpl.github.io/YOUR_REPO_NAME/)**
+**[🚀 View Live Demo](https://amirhosseinjpl.github.io/Jpl-sub-processor/)**
 
 A serverless application for processing, testing, filtering, and hosting proxy configurations (VLESS, VMESS, Trojan, etc.) directly on Cloudflare Workers.
 
@@ -12,7 +12,7 @@ A serverless application for processing, testing, filtering, and hosting proxy c
 ## Architecture Overview
 
 ```text
-+-------------------+       Real Ping Test (< 700ms)     +-------------------+
++-------------------+       Real Ping Test (< 700ms) +-------------------+
 |   User Browser    | -----------------------------> |   Proxy Servers   |
 |  (Client Network) | <----------------------------- | (VLESS, VMESS...) |
 +-------------------+          Success/Fail          +-------------------+
