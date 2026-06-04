@@ -436,13 +436,6 @@ async function pingOne(host, port, timeoutMs) {
     const elapsed = Math.round(performance.now() - start);
     return elapsed < timeoutMs ? elapsed : null;
   }
-}
-
-async function generate(){
-  if(WORKER_URL === 'https://git.ujpll.workers.dev') {
-     showToast('Error: Worker URL is not set in index.html', 'error');
-     return;
-  }
 
   const btn=document.getElementById('generate-btn');
   const subUrl=document.getElementById('sub-url').value.trim();
