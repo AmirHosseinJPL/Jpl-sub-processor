@@ -366,8 +366,13 @@ function toggleRename(){
 function toggleCollapse(header,targetId){
   header.classList.toggle('open');
   const body=document.getElementById(targetId);
-  body.classList.toggle('collapsed',!header.classList.contains('open'));
-  if(header.classList.contains('open')) body.style.maxHeight='1000px';
+  const isOpen = header.classList.contains('open');
+  body.classList.toggle('collapsed',!isOpen);
+  if(isOpen) {
+    body.style.maxHeight = body.scrollHeight + 'px';
+  } else {
+    body.style.maxHeight = '0';
+  }
 }
 
 function setStep(n){
@@ -379,11 +384,10 @@ function setStep(n){
   }
 }
 
-document.querySelectorAll('.proto-pill').forEach(function(pill){
-  pill.addEventListener('click',function(e){
-    const input=this.querySelector('input');
-    if(e.target.tagName!=='INPUT') input.checked=!input.checked;
-    this.classList.toggle('checked',input.checked);
+// ✅ اصلاح شده: استفاده از event 'change' به جای 'click' برای جلوگیری از تغییر دو باره
+document.querySelectorAll('.proto-pill input').forEach(function(input){
+  input.addEventListener('change', function(){
+    this.parentNode.classList.toggle('checked', this.checked);
   });
 });
 
@@ -421,6 +425,7 @@ function goToStep1(){
 }
 
 // --- Core Processing Logic ---
+// ✅ اصلاح شده: تابع pingOne به درستی بسته شده و generate جداگانه تعریف شده
 async function pingOne(host, port, timeoutMs) {
   if (!host) return null;
   const start = performance.now();
@@ -436,7 +441,9 @@ async function pingOne(host, port, timeoutMs) {
     const elapsed = Math.round(performance.now() - start);
     return elapsed < timeoutMs ? elapsed : null;
   }
+}
 
+async function generate() {
   const btn=document.getElementById('generate-btn');
   const subUrl=document.getElementById('sub-url').value.trim();
   const rawConfigs=document.getElementById('raw-configs').value.trim();
@@ -545,25 +552,59 @@ async function pingOne(host, port, timeoutMs) {
   }
 }
 
+// ✅ اصلاح شده: بررسی مقادیر undefined برای جلوگیری از نمایش NaN
 function showResult(data){
   document.getElementById('step2-content').style.display='none';
   document.getElementById('result-section').style.display='block';
-  document.getElementById('sub-link-box').textContent=data.subLink;
-  document.getElementById('raw-output-box').value=data.rawConfigs;
-  document.getElementById('stat-total').textContent=data.count;
-  document.getElementById('stat-original').textContent=data.originalCount;
-  const expH=Math.round(data.expiresIn/3600);
+  document.getElementById('sub-link-box').textContent = data.subLink || '–';
+  document.getElementById('raw-output-box').value = data.rawConfigs || '';
+  document.getElementById('stat-total').textContent = data.count || 0;
+  document.getElementById('stat-original').textContent = data.originalCount || 0;
+  const expiresIn = data.expiresIn || 0;
+  const expH=Math.round(expiresIn/3600);
   const timeText=expH>=24?Math.round(expH/24)+'d':expH+'h';
   document.getElementById('stat-expires').textContent=timeText;
-  document.getElementById('result-meta').textContent='ID: '+data.id+' · expires in '+timeText;
+  document.getElementById('result-meta').textContent='ID: '+(data.id || '–')+' · expires in '+timeText;
   window.scrollTo({top:0,behavior:'smooth'});
 }
 
-function copySubLink(){
-  navigator.clipboard.writeText(document.getElementById('sub-link-box').textContent).then(function(){showToast('Link copied ✓','success');});
+// ✅ اصلاح شده: اضافه شدن fallback برای مرورگرهای بدون Clipboard API
+function fallbackCopy(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+    showToast('Copied ✓', 'success');
+  } catch (e) {
+    showToast('Copy failed — please copy manually', 'error');
+  }
+  document.body.removeChild(textarea);
 }
+
+function copySubLink(){
+  const text = document.getElementById('sub-link-box').textContent;
+  if(navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text)
+      .then(function(){ showToast('Link copied ✓','success'); })
+      .catch(function(){ fallbackCopy(text); });
+  } else {
+    fallbackCopy(text);
+  }
+}
+
 function copyRaw(){
-  navigator.clipboard.writeText(document.getElementById('raw-output-box').value).then(function(){showToast('Configs copied ✓','success');});
+  const text = document.getElementById('raw-output-box').value;
+  if(navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text)
+      .then(function(){ showToast('Configs copied ✓','success'); })
+      .catch(function(){ fallbackCopy(text); });
+  } else {
+    fallbackCopy(text);
+  }
 }
 
 function resetAll(){
@@ -574,7 +615,10 @@ function resetAll(){
   document.getElementById('ping-list').innerHTML = '';
   if(options.rename) toggleRename();
   document.getElementById('rename-prefix').value='JPL';
-  document.querySelectorAll('.proto-pill input').forEach(function(cb){cb.checked=false;cb.parentNode.classList.remove('checked');});
+  document.querySelectorAll('.proto-pill input').forEach(function(cb){
+    cb.checked=false;
+    cb.parentNode.classList.remove('checked');
+  });
   setStep(1);window.scrollTo({top:0,behavior:'smooth'});
 }
 
