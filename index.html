@@ -234,6 +234,16 @@ select option{background:var(--bg2)}
 
       <div class="toggle-row">
         <div class="toggle-label">
+          Ping Test
+          <span class="toggle-hint">Test all IPs and keep only those under 700ms</span>
+        </div>
+        <div class="toggle" id="toggle-ping" onclick="togglePing()"></div>
+      </div>
+
+      <hr class="divider">
+
+      <div class="toggle-row">
+        <div class="toggle-label">
           Link Expiry
           <span class="toggle-hint">Subscription link expiry duration on the server</span>
         </div>
@@ -262,7 +272,7 @@ select option{background:var(--bg2)}
 
     <div style="display:flex;gap:12px">
       <button class="btn btn-ghost" onclick="goToStep1()" style="flex:0 0 100px">← Back</button>
-      <button class="btn btn-primary" id="generate-btn" onclick="generate()">⚡ Test & Generate</button>
+      <button class="btn btn-primary" id="generate-btn" onclick="generate()">⚡ Generate</button>
     </div>
   </div>
 
@@ -320,7 +330,7 @@ const WORKER_URL = 'https://git.ujpll.workers.dev';
 
 // --- State Management ---
 let currentTab = 'sub';
-let options = { rename: false };
+let options = { rename: false, ping: false };
 
 // --- Canvas Initialization ---
 (function(){
@@ -361,6 +371,12 @@ function toggleRename(){
   options.rename=!options.rename;
   document.getElementById('toggle-rename').classList.toggle('on',options.rename);
   document.getElementById('rename-options').style.display=options.rename?'block':'none';
+}
+
+function togglePing(){
+  options.ping=!options.ping;
+  document.getElementById('toggle-ping').classList.toggle('on',options.ping);
+  document.getElementById('generate-btn').textContent = options.ping ? '⚡ Test & Generate' : '⚡ Generate';
 }
 
 function toggleCollapse(header,targetId){
@@ -472,68 +488,73 @@ async function generate() {
     if(!resPrep.ok) throw new Error(prepData.error||'Preparation failed');
     if(!prepData.configs||prepData.configs.length===0) throw new Error('No valid configs found');
 
-    btn.innerHTML='<div class="spinner"></div> Testing Latency...';
-    document.getElementById('generation-progress').style.display='block';
-    document.getElementById('ping-section').style.display='block';
-    
-    const validConfigs = [];
     const configs = prepData.configs;
-    const concurrency = 10;
-    const MAX_PING = 700;
-    
-    let listHtml = '';
-    for(let i=0; i<configs.length; i++) {
-      let displayName = configs[i].name || 'Unknown';
-      listHtml += '<div class="ping-item" id="ping-row-'+i+'">' + 
-                  '<div class="ping-dot pending" id="ping-dot-'+i+'"></div>' + 
-                  '<div class="ping-host">'+configs[i].host+':'+configs[i].port+'</div>' + 
-                  '<div class="ping-name">'+displayName+'</div>' +
-                  '<div class="ping-ms pending" id="ping-ms-'+i+'">–</div></div>';
-    }
-    document.getElementById('ping-list').innerHTML = listHtml;
+    let validConfigs = [];
 
-    for (let i = 0; i < configs.length; i += concurrency) {
-      const chunk = configs.slice(i, i + concurrency);
-      
-      for(let j=0; j<chunk.length; j++) {
-        let gIdx = i+j;
-        document.getElementById('ping-dot-'+gIdx).className = 'ping-dot running';
-        document.getElementById('ping-ms-'+gIdx).className = 'ping-ms pending';
-        document.getElementById('ping-ms-'+gIdx).textContent = '...';
-        let row = document.getElementById('ping-row-'+gIdx);
-        if(row && j===0) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (options.ping) {
+      btn.innerHTML='<div class="spinner"></div> Testing Latency...';
+      document.getElementById('generation-progress').style.display='block';
+      document.getElementById('ping-section').style.display='block';
+
+      const concurrency = 10;
+      const MAX_PING = 700;
+
+      let listHtml = '';
+      for(let i=0; i<configs.length; i++) {
+        let displayName = configs[i].name || 'Unknown';
+        listHtml += '<div class="ping-item" id="ping-row-'+i+'">' +
+                    '<div class="ping-dot pending" id="ping-dot-'+i+'"></div>' +
+                    '<div class="ping-host">'+configs[i].host+':'+configs[i].port+'</div>' +
+                    '<div class="ping-name">'+displayName+'</div>' +
+                    '<div class="ping-ms pending" id="ping-ms-'+i+'">–</div></div>';
       }
-      
-      const promises = chunk.map(async function(c, j) {
-        let gIdx = i+j;
-        let ms = await pingOne(c.host, c.port, 2500);
-        
-        let st = (ms === null) ? 'timeout' : (ms < 400 ? 'fast' : (ms <= MAX_PING ? 'medium' : 'slow'));
-        let elDot = document.getElementById('ping-dot-'+gIdx);
-        if(elDot) elDot.className = 'ping-dot ' + st;
-        let elMs = document.getElementById('ping-ms-'+gIdx);
-        if(elMs) {
-           elMs.className = 'ping-ms ' + st;
-           elMs.textContent = (ms === null) ? 'timeout' : (ms + ' ms');
+      document.getElementById('ping-list').innerHTML = listHtml;
+
+      for (let i = 0; i < configs.length; i += concurrency) {
+        const chunk = configs.slice(i, i + concurrency);
+
+        for(let j=0; j<chunk.length; j++) {
+          let gIdx = i+j;
+          document.getElementById('ping-dot-'+gIdx).className = 'ping-dot running';
+          document.getElementById('ping-ms-'+gIdx).className = 'ping-ms pending';
+          document.getElementById('ping-ms-'+gIdx).textContent = '...';
+          let row = document.getElementById('ping-row-'+gIdx);
+          if(row && j===0) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
-        
-        return (ms !== null && ms < MAX_PING) ? c.raw : null;
-      });
-      
-      const results = await Promise.all(promises);
-      for(let j=0; j<results.length; j++) {
-        if(results[j] !== null) validConfigs.push(results[j]);
+
+        const promises = chunk.map(async function(c, j) {
+          let gIdx = i+j;
+          let ms = await pingOne(c.host, c.port, 2500);
+
+          let st = (ms === null) ? 'timeout' : (ms < 400 ? 'fast' : (ms <= MAX_PING ? 'medium' : 'slow'));
+          let elDot = document.getElementById('ping-dot-'+gIdx);
+          if(elDot) elDot.className = 'ping-dot ' + st;
+          let elMs = document.getElementById('ping-ms-'+gIdx);
+          if(elMs) {
+            elMs.className = 'ping-ms ' + st;
+            elMs.textContent = (ms === null) ? 'timeout' : (ms + ' ms');
+          }
+
+          return (ms !== null && ms < MAX_PING) ? c.raw : null;
+        });
+
+        const results = await Promise.all(promises);
+        for(let j=0; j<results.length; j++) {
+          if(results[j] !== null) validConfigs.push(results[j]);
+        }
+
+        let progress = Math.min(i + concurrency, configs.length);
+        document.getElementById('ping-test-status').textContent = progress + ' / ' + configs.length;
+        document.getElementById('gen-ping-bar').style.width = ((progress / configs.length) * 100) + '%';
       }
-      
-      let progress = Math.min(i + concurrency, configs.length);
-      document.getElementById('ping-test-status').textContent = progress + ' / ' + configs.length;
-      document.getElementById('gen-ping-bar').style.width = ((progress / configs.length) * 100) + '%';
+
+      await new Promise(r => setTimeout(r, 800));
+      document.getElementById('generation-progress').style.display='none';
+
+      if (validConfigs.length === 0) throw new Error('All configs timed out or exceeded the 700ms limit.');
+    } else {
+      validConfigs = configs.map(function(c) { return c.raw; });
     }
-
-    await new Promise(r => setTimeout(r, 800));
-    document.getElementById('generation-progress').style.display='none';
-
-    if (validConfigs.length === 0) throw new Error('All configs timed out or exceeded the 700ms limit.');
 
     btn.innerHTML='<div class="spinner"></div> Saving on server...';
     const renamePrefix=options.rename?(document.getElementById('rename-prefix').value.trim()||'JPL'):'';
@@ -548,7 +569,7 @@ async function generate() {
     showToast(err.message,'error');
     document.getElementById('generation-progress').style.display='none';
   } finally {
-    btn.disabled=false;btn.innerHTML='⚡ Test & Generate';
+    btn.disabled=false;btn.innerHTML=options.ping?'⚡ Test & Generate':'⚡ Generate';
   }
 }
 
@@ -614,6 +635,7 @@ function resetAll(){
   document.getElementById('generation-progress').style.display = 'none';
   document.getElementById('ping-list').innerHTML = '';
   if(options.rename) toggleRename();
+  if(options.ping) togglePing();
   document.getElementById('rename-prefix').value='JPL';
   document.querySelectorAll('.proto-pill input').forEach(function(cb){
     cb.checked=false;
