@@ -33,6 +33,51 @@ export default {
   }
 };
 
+/**
+ * Expands an array of IPs and/or CIDR ranges into a flat list of individual IPs.
+ * CIDR ranges are capped at 256 hosts (/24 or wider) to prevent memory exhaustion.
+ */
+function expandIPs(entries) {
+  const result = [];
+  for (const entry of entries) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+
+    if (!trimmed.includes('/')) {
+      result.push(trimmed);
+      continue;
+    }
+
+    // CIDR expansion
+    const [baseAddr, prefixStr] = trimmed.split('/');
+    const prefix = parseInt(prefixStr, 10);
+    if (isNaN(prefix) || prefix < 0 || prefix > 32) {
+      result.push(baseAddr); // fallback: treat as plain IP
+      continue;
+    }
+
+    const hostBits = 32 - prefix;
+    // Cap at /24 (256 hosts) to be safe; larger ranges only use first 256 hosts
+    const count = Math.min(Math.pow(2, hostBits), 256);
+
+    const parts = baseAddr.split('.').map(Number);
+    const baseInt = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+    const networkInt = (baseInt & (0xFFFFFFFF << hostBits)) >>> 0;
+
+    for (let i = 0; i < count; i++) {
+      const ipInt = (networkInt + i) >>> 0;
+      const ip = [
+        (ipInt >>> 24) & 0xFF,
+        (ipInt >>> 16) & 0xFF,
+        (ipInt >>> 8)  & 0xFF,
+         ipInt         & 0xFF,
+      ].join('.');
+      result.push(ip);
+    }
+  }
+  return result;
+}
+
 async function handlePrepare(request) {
   const data = await request.json();
   let rawText = "";
@@ -47,6 +92,10 @@ async function handlePrepare(request) {
   } else if (data.rawConfigs) {
     rawText = data.rawConfigs;
   }
+
+  const expandedIPs = (data.customIPs && data.customIPs.length > 0)
+    ? expandIPs(data.customIPs)
+    : [];
 
   let configs = rawText.split('\n').filter(line => line.trim() !== '');
   let parsedConfigs = [];
@@ -79,24 +128,27 @@ async function handlePrepare(request) {
        host = "error-parsing";
     }
 
-    if (data.customIPs && data.customIPs.length > 0) {
-       const randomIp = data.customIPs[Math.floor(Math.random() * data.customIPs.length)];
-       if (protocol === 'vmess') {
-         try {
+    if (expandedIPs.length > 0) {
+      for (const ip of expandedIPs) {
+        let patchedRaw = raw;
+        if (protocol === 'vmess') {
+          try {
             let vmessData = JSON.parse(atob(raw.replace('vmess://', '')));
-            vmessData.add = randomIp; 
-            raw = 'vmess://' + btoa(JSON.stringify(vmessData));
-         } catch(e){}
-       } else {
-         try {
-           const urlObj = new URL(raw);
-           urlObj.hostname = randomIp;
-           raw = urlObj.toString();
-         } catch(e){}
-       }
+            vmessData.add = ip;
+            patchedRaw = 'vmess://' + btoa(JSON.stringify(vmessData));
+          } catch (e) {}
+        } else {
+          try {
+            const urlObj = new URL(raw);
+            urlObj.hostname = ip;
+            patchedRaw = urlObj.toString();
+          } catch (e) {}
+        }
+        parsedConfigs.push({ name, host: ip, port, raw: patchedRaw });
+      }
+    } else {
+      parsedConfigs.push({ name, host, port, raw });
     }
-
-    parsedConfigs.push({ name, host, port, raw });
   }
 
   return new Response(JSON.stringify({ configs: parsedConfigs }), {
