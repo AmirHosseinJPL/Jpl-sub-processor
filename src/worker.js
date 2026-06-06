@@ -1,13 +1,13 @@
 /**
  * @fileoverview JPL Subscription Processor - Edge Computing Node
  * @author AmirHosseinJPL
- * @version 1.0.0
+ * @version 1.1.0
  * @license MIT
- * * @description
+ * @description
  * A unified serverless application (Frontend Client + Edge API) designed for 
  * Cloudflare Workers. It processes, filters, pings, and dynamically hosts 
  * proxy configuration links.
- * * @environment Cloudflare Workers
+ * @environment Cloudflare Workers
  * @requires {KVNamespace} JPL_KV - Key-Value storage binding for state management.
  */
 
@@ -230,9 +230,6 @@ select option{background:var(--bg2)}
         <label class="proto-pill"><input type="checkbox" value="trojan"> Trojan</label>
         <label class="proto-pill"><input type="checkbox" value="ss"> Shadowsocks</label>
         <label class="proto-pill"><input type="checkbox" value="hysteria2"> Hysteria2</label>
-        <label class="proto-pill"><input type="checkbox" value="hy2"> HY2</label>
-        <label class="proto-pill"><input type="checkbox" value="tuic"> TUIC</label>
-        <label class="proto-pill"><input type="checkbox" value="wireguard"> WireGuard</label>
       </div>
     </div>
 
@@ -248,6 +245,16 @@ select option{background:var(--bg2)}
       </div>
       <div id="rename-options" style="display:none;padding:8px 0">
         <input type="text" id="rename-prefix" placeholder="e.g., Raven or JPL" value="JPL"/>
+      </div>
+
+      <hr class="divider">
+
+      <div class="toggle-row">
+        <div class="toggle-label">
+          Ping Test
+          <span class="toggle-hint">Test all IPs and keep only those under 700ms</span>
+        </div>
+        <div class="toggle" id="toggle-ping" onclick="togglePing()"></div>
       </div>
 
       <hr class="divider">
@@ -282,7 +289,7 @@ select option{background:var(--bg2)}
 
     <div style="display:flex;gap:12px">
       <button class="btn btn-ghost" onclick="goToStep1()" style="flex:0 0 100px">← Back</button>
-      <button class="btn btn-primary" id="generate-btn" onclick="generate()">⚡ Test & Generate</button>
+      <button class="btn btn-primary" id="generate-btn" onclick="generate()">⚡ Generate</button>
     </div>
   </div>
 
@@ -338,11 +345,11 @@ select option{background:var(--bg2)}
 // --- Environment Configuration ---
 const WORKER_URL = '';
 
-// --- Application State ---
+// --- State Management ---
 let currentTab = 'sub';
-let options = { rename: false };
+let options = { rename: false, ping: false };
 
-// --- Rendering: Starfield Background ---
+// --- Canvas Initialization ---
 (function(){
   const canvas = document.getElementById('galaxy-canvas');
   const ctx = canvas.getContext('2d');
@@ -383,11 +390,22 @@ function toggleRename(){
   document.getElementById('rename-options').style.display=options.rename?'block':'none';
 }
 
+function togglePing(){
+  options.ping=!options.ping;
+  document.getElementById('toggle-ping').classList.toggle('on',options.ping);
+  document.getElementById('generate-btn').textContent = options.ping ? '⚡ Test & Generate' : '⚡ Generate';
+}
+
 function toggleCollapse(header,targetId){
   header.classList.toggle('open');
   const body=document.getElementById(targetId);
-  body.classList.toggle('collapsed',!header.classList.contains('open'));
-  if(header.classList.contains('open')) body.style.maxHeight='1000px';
+  const isOpen = header.classList.contains('open');
+  body.classList.toggle('collapsed',!isOpen);
+  if(isOpen) {
+    body.style.maxHeight = body.scrollHeight + 'px';
+  } else {
+    body.style.maxHeight = '0';
+  }
 }
 
 function setStep(n){
@@ -399,11 +417,9 @@ function setStep(n){
   }
 }
 
-document.querySelectorAll('.proto-pill').forEach(function(pill){
-  pill.addEventListener('click',function(e){
-    const input=this.querySelector('input');
-    if(e.target.tagName!=='INPUT') input.checked=!input.checked;
-    this.classList.toggle('checked',input.checked);
+document.querySelectorAll('.proto-pill input').forEach(function(input){
+  input.addEventListener('change', function(){
+    this.parentNode.classList.toggle('checked', this.checked);
   });
 });
 
@@ -440,7 +456,7 @@ function goToStep1(){
   setStep(1);
 }
 
-// --- Network Diagnostic Tools ---
+// --- Core Processing Logic ---
 async function pingOne(host, port, timeoutMs) {
   if (!host) return null;
   const start = performance.now();
@@ -458,8 +474,7 @@ async function pingOne(host, port, timeoutMs) {
   }
 }
 
-// --- Data Generation & Dispatch Pipeline ---
-async function generate(){
+async function generate() {
   const btn=document.getElementById('generate-btn');
   const subUrl=document.getElementById('sub-url').value.trim();
   const rawConfigs=document.getElementById('raw-configs').value.trim();
@@ -488,68 +503,73 @@ async function generate(){
     if(!resPrep.ok) throw new Error(prepData.error||'Preparation failed');
     if(!prepData.configs||prepData.configs.length===0) throw new Error('No valid configs found');
 
-    btn.innerHTML='<div class="spinner"></div> Testing Latency...';
-    document.getElementById('generation-progress').style.display='block';
-    document.getElementById('ping-section').style.display='block';
-    
-    const validConfigs = [];
     const configs = prepData.configs;
-    const concurrency = 10;
-    const MAX_PING = 700;
-    
-    let listHtml = '';
-    for(let i=0; i<configs.length; i++) {
-      let displayName = configs[i].name || 'Unknown';
-      listHtml += '<div class="ping-item" id="ping-row-'+i+'">' + 
-                  '<div class="ping-dot pending" id="ping-dot-'+i+'"></div>' + 
-                  '<div class="ping-host">'+configs[i].host+':'+configs[i].port+'</div>' + 
-                  '<div class="ping-name">'+displayName+'</div>' +
-                  '<div class="ping-ms pending" id="ping-ms-'+i+'">–</div></div>';
-    }
-    document.getElementById('ping-list').innerHTML = listHtml;
+    let validConfigs = [];
 
-    for (let i = 0; i < configs.length; i += concurrency) {
-      const chunk = configs.slice(i, i + concurrency);
-      
-      for(let j=0; j<chunk.length; j++) {
-        let gIdx = i+j;
-        document.getElementById('ping-dot-'+gIdx).className = 'ping-dot running';
-        document.getElementById('ping-ms-'+gIdx).className = 'ping-ms pending';
-        document.getElementById('ping-ms-'+gIdx).textContent = '...';
-        let row = document.getElementById('ping-row-'+gIdx);
-        if(row && j===0) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (options.ping) {
+      btn.innerHTML='<div class="spinner"></div> Testing Latency...';
+      document.getElementById('generation-progress').style.display='block';
+      document.getElementById('ping-section').style.display='block';
+
+      const concurrency = 10;
+      const MAX_PING = 700;
+
+      let listHtml = '';
+      for(let i=0; i<configs.length; i++) {
+        let displayName = configs[i].name || 'Unknown';
+        listHtml += '<div class="ping-item" id="ping-row-'+i+'">' +
+                    '<div class="ping-dot pending" id="ping-dot-'+i+'"></div>' +
+                    '<div class="ping-host">'+configs[i].host+':'+configs[i].port+'</div>' +
+                    '<div class="ping-name">'+displayName+'</div>' +
+                    '<div class="ping-ms pending" id="ping-ms-'+i+'">–</div></div>';
       }
-      
-      const promises = chunk.map(async function(c, j) {
-        let gIdx = i+j;
-        let ms = await pingOne(c.host, c.port, 2500);
-        
-        let st = (ms === null) ? 'timeout' : (ms < 400 ? 'fast' : (ms <= MAX_PING ? 'medium' : 'slow'));
-        let elDot = document.getElementById('ping-dot-'+gIdx);
-        if(elDot) elDot.className = 'ping-dot ' + st;
-        let elMs = document.getElementById('ping-ms-'+gIdx);
-        if(elMs) {
-           elMs.className = 'ping-ms ' + st;
-           elMs.textContent = (ms === null) ? 'timeout' : (ms + ' ms');
+      document.getElementById('ping-list').innerHTML = listHtml;
+
+      for (let i = 0; i < configs.length; i += concurrency) {
+        const chunk = configs.slice(i, i + concurrency);
+
+        for(let j=0; j<chunk.length; j++) {
+          let gIdx = i+j;
+          document.getElementById('ping-dot-'+gIdx).className = 'ping-dot running';
+          document.getElementById('ping-ms-'+gIdx).className = 'ping-ms pending';
+          document.getElementById('ping-ms-'+gIdx).textContent = '...';
+          let row = document.getElementById('ping-row-'+gIdx);
+          if(row && j===0) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
-        
-        return (ms !== null && ms < MAX_PING) ? c.raw : null;
-      });
-      
-      const results = await Promise.all(promises);
-      for(let j=0; j<results.length; j++) {
-        if(results[j] !== null) validConfigs.push(results[j]);
+
+        const promises = chunk.map(async function(c, j) {
+          let gIdx = i+j;
+          let ms = await pingOne(c.host, c.port, 2500);
+
+          let st = (ms === null) ? 'timeout' : (ms < 400 ? 'fast' : (ms <= MAX_PING ? 'medium' : 'slow'));
+          let elDot = document.getElementById('ping-dot-'+gIdx);
+          if(elDot) elDot.className = 'ping-dot ' + st;
+          let elMs = document.getElementById('ping-ms-'+gIdx);
+          if(elMs) {
+            elMs.className = 'ping-ms ' + st;
+            elMs.textContent = (ms === null) ? 'timeout' : (ms + ' ms');
+          }
+
+          return (ms !== null && ms < MAX_PING) ? c.raw : null;
+        });
+
+        const results = await Promise.all(promises);
+        for(let j=0; j<results.length; j++) {
+          if(results[j] !== null) validConfigs.push(results[j]);
+        }
+
+        let progress = Math.min(i + concurrency, configs.length);
+        document.getElementById('ping-test-status').textContent = progress + ' / ' + configs.length;
+        document.getElementById('gen-ping-bar').style.width = ((progress / configs.length) * 100) + '%';
       }
-      
-      let progress = Math.min(i + concurrency, configs.length);
-      document.getElementById('ping-test-status').textContent = progress + ' / ' + configs.length;
-      document.getElementById('gen-ping-bar').style.width = ((progress / configs.length) * 100) + '%';
+
+      await new Promise(r => setTimeout(r, 800));
+      document.getElementById('generation-progress').style.display='none';
+
+      if (validConfigs.length === 0) throw new Error('All configs timed out or exceeded the 700ms limit.');
+    } else {
+      validConfigs = configs.map(function(c) { return c.raw; });
     }
-
-    await new Promise(r => setTimeout(r, 800));
-    document.getElementById('generation-progress').style.display='none';
-
-    if (validConfigs.length === 0) throw new Error('All configs timed out or exceeded the 700ms limit.');
 
     btn.innerHTML='<div class="spinner"></div> Saving on server...';
     const renamePrefix=options.rename?(document.getElementById('rename-prefix').value.trim()||'JPL'):'';
@@ -564,29 +584,61 @@ async function generate(){
     showToast(err.message,'error');
     document.getElementById('generation-progress').style.display='none';
   } finally {
-    btn.disabled=false;btn.innerHTML='⚡ Test & Generate';
+    btn.disabled=false;btn.innerHTML=options.ping?'⚡ Test & Generate':'⚡ Generate';
   }
 }
 
 function showResult(data){
   document.getElementById('step2-content').style.display='none';
   document.getElementById('result-section').style.display='block';
-  document.getElementById('sub-link-box').textContent=data.subLink;
-  document.getElementById('raw-output-box').value=data.rawConfigs;
-  document.getElementById('stat-total').textContent=data.count;
-  document.getElementById('stat-original').textContent=data.originalCount;
-  const expH=Math.round(data.expiresIn/3600);
+  document.getElementById('sub-link-box').textContent = data.subLink || '–';
+  document.getElementById('raw-output-box').value = data.rawConfigs || '';
+  document.getElementById('stat-total').textContent = data.count || 0;
+  document.getElementById('stat-original').textContent = data.originalCount || 0;
+  const expiresIn = data.expiresIn || 0;
+  const expH=Math.round(expiresIn/3600);
   const timeText=expH>=24?Math.round(expH/24)+'d':expH+'h';
   document.getElementById('stat-expires').textContent=timeText;
-  document.getElementById('result-meta').textContent='ID: '+data.id+' · expires in '+timeText;
+  document.getElementById('result-meta').textContent='ID: '+(data.id || '–')+' · expires in '+timeText;
   window.scrollTo({top:0,behavior:'smooth'});
 }
 
-function copySubLink(){
-  navigator.clipboard.writeText(document.getElementById('sub-link-box').textContent).then(function(){showToast('Link copied ✓','success');});
+function fallbackCopy(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+    showToast('Copied ✓', 'success');
+  } catch (e) {
+    showToast('Copy failed — please copy manually', 'error');
+  }
+  document.body.removeChild(textarea);
 }
+
+function copySubLink(){
+  const text = document.getElementById('sub-link-box').textContent;
+  if(navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text)
+      .then(function(){ showToast('Link copied ✓','success'); })
+      .catch(function(){ fallbackCopy(text); });
+  } else {
+    fallbackCopy(text);
+  }
+}
+
 function copyRaw(){
-  navigator.clipboard.writeText(document.getElementById('raw-output-box').value).then(function(){showToast('Configs copied ✓','success');});
+  const text = document.getElementById('raw-output-box').value;
+  if(navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text)
+      .then(function(){ showToast('Configs copied ✓','success'); })
+      .catch(function(){ fallbackCopy(text); });
+  } else {
+    fallbackCopy(text);
+  }
 }
 
 function resetAll(){
@@ -596,8 +648,12 @@ function resetAll(){
   document.getElementById('generation-progress').style.display = 'none';
   document.getElementById('ping-list').innerHTML = '';
   if(options.rename) toggleRename();
+  if(options.ping) togglePing();
   document.getElementById('rename-prefix').value='JPL';
-  document.querySelectorAll('.proto-pill input').forEach(function(cb){cb.checked=false;cb.parentNode.classList.remove('checked');});
+  document.querySelectorAll('.proto-pill input').forEach(function(cb){
+    cb.checked=false;
+    cb.parentNode.classList.remove('checked');
+  });
   setStep(1);window.scrollTo({top:0,behavior:'smooth'});
 }
 
@@ -616,217 +672,234 @@ function showToast(msg,type){
 // ============================================================================
 
 const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
 };
 
 export default {
   async fetch(request, env) {
-    if (request.method === 'OPTIONS') return new Response(null, { headers: CORS_HEADERS });
-
-    const url  = new URL(request.url);
+    const url = new URL(request.url);
     const path = url.pathname;
 
-    try {
-      if (path === '/' || path === '/index.html') {
-        return new Response(HTML_CONTENT, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-      }
-      if (path === '/api/prepare'  && request.method === 'POST') return handlePrepare(request);
-      if (path === '/api/create'   && request.method === 'POST') return handleCreate(request, env);
-      if (path.startsWith('/api/sub/'))                          return handleSub(path, env);
-
-      return json({ error: 'Endpoint not found' }, 404);
-    } catch (err) {
-      console.error(err);
-      return json({ error: 'Internal server error', detail: err.message }, 500);
+    if (request.method === "OPTIONS") {
+      return new Response(null, { headers: CORS_HEADERS });
     }
-  },
+
+    try {
+      // 1. Serve HTML Frontend
+      if (request.method === "GET" && (path === '/' || path === '/index.html')) {
+        return new Response(HTML_CONTENT, { 
+          headers: { ...CORS_HEADERS, 'Content-Type': 'text/html; charset=utf-8' } 
+        });
+      }
+
+      // 2. API Routes
+      if (request.method === "POST" && path === "/api/prepare") {
+        return await handlePrepare(request);
+      }
+      if (request.method === "POST" && path === "/api/create") {
+        return await handleCreate(request, env, url.origin);
+      }
+      if (request.method === "GET" && path.startsWith("/sub/")) {
+        return await handleSub(request, env, path);
+      }
+      
+      return new Response("JPL Backend is active 🚀", { headers: CORS_HEADERS });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" }
+      });
+    }
+  }
 };
 
-// --- Route Handlers ---
+/**
+ * Expands an array of IPs and/or CIDR ranges into a flat list of individual IPs.
+ * CIDR ranges are capped at 256 hosts (/24 or wider) to prevent memory exhaustion.
+ */
+function expandIPs(entries) {
+  const result = [];
+  for (const entry of entries) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
 
-async function handlePrepare(request) {
-  const { subUrl, rawConfigs, customIPs, protocols } = await request.json();
+    if (!trimmed.includes('/')) {
+      result.push(trimmed);
+      continue;
+    }
 
-  let configs = subUrl
-    ? await fetchAndDecodeSubscription(subUrl)
-    : parseRawConfigs(rawConfigs || '');
+    // CIDR expansion
+    const [baseAddr, prefixStr] = trimmed.split('/');
+    const prefix = parseInt(prefixStr, 10);
+    if (isNaN(prefix) || prefix < 0 || prefix > 32) {
+      result.push(baseAddr); // fallback: treat as plain IP
+      continue;
+    }
 
-  const processed = processConfigs(configs, {
-    customIPs: customIPs || [],
-    protocols:  protocols  || [],
-  });
+    const hostBits = 32 - prefix;
+    // Cap at /24 (256 hosts) to be safe; larger ranges only use first 256 hosts
+    const count = Math.min(Math.pow(2, hostBits), 256);
 
-  const extract = processed.map(c => {
-    const masked = maskConfig(c);
-    return { raw: c, host: masked.host, port: masked.port || 443, name: masked.name };
-  });
+    const parts = baseAddr.split('.').map(Number);
+    const baseInt = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+    const networkInt = (baseInt & (0xFFFFFFFF << hostBits)) >>> 0;
 
-  return json({ configs: extract });
-}
-
-async function handleCreate(request, env) {
-  const { finalConfigs, renamePrefix, ttl, originalCount } = await request.json();
-
-  if (!finalConfigs || finalConfigs.length === 0) return json({ error: 'No valid configs provided.' }, 400);
-
-  let processed = [...finalConfigs];
-  if (renamePrefix) {
-    processed = processed.map((c, i) => setConfigFragment(c, `${renamePrefix}-${String(i+1).padStart(3,'0')}`));
-  }
-
-  const encoded = encodeSubscription(processed);
-  const id      = generateID();
-  const expiry  = Math.min(parseInt(ttl) || 86400, 259200);
-
-  if (env.JPL_KV) {
-    await env.JPL_KV.put(`sub:${id}`,  encoded, { expirationTtl: expiry });
-    await env.JPL_KV.put(`meta:${id}`, JSON.stringify({ created: Date.now(), count: processed.length, originalCount: originalCount || processed.length, expiry }), { expirationTtl: expiry });
-  }
-
-  const subLink = `${new URL(request.url).origin}/api/sub/${id}`;
-  return json({ id, subLink, rawConfigs: processed.join('\n'), count: processed.length, originalCount: originalCount || processed.length, expiresIn: expiry });
-}
-
-async function handleSub(path, env) {
-  const id      = path.replace('/api/sub/', '').split('?')[0];
-  const encoded = env.JPL_KV ? await env.JPL_KV.get(`sub:${id}`) : null;
-
-  if (!encoded) return new Response('Subscription not found or expired', { status: 404, headers: { ...CORS_HEADERS, 'Content-Type': 'text/plain' } });
-
-  return new Response(encoded, {
-    headers: {
-      ...CORS_HEADERS,
-      'Content-Type':          'text/plain; charset=utf-8',
-      'Cache-Control':         'no-cache',
-      'Subscription-Userinfo': 'upload=0; download=0; total=0; expire=0',
-    },
-  });
-}
-
-// --- Data Processing & Utilities ---
-
-async function fetchAndDecodeSubscription(subUrl) {
-  const res = await fetch(subUrl, { headers: { 'User-Agent': 'v2rayNG/1.8.0' }, cf: { cacheTtl: 60 } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return parseRawConfigs((await res.text()).trim());
-}
-
-function parseRawConfigs(text) {
-  let decoded = text;
-  try {
-    const b = atob(text.replace(/\s/g, ''));
-    if (b.includes('://')) decoded = b;
-  } catch (_) {}
-  return decoded.split(/[\n\r]+/).map(l => l.trim()).filter(isValidConfig);
-}
-
-function isValidConfig(line) {
-  return /^(vless|vmess|trojan|ss|ssr|hysteria|hysteria2|hy2|tuic|wireguard):\/\//.test(line);
-}
-
-function processConfigs(configs, { customIPs, protocols }) {
-  let result = [...configs];
-
-  if (protocols.length > 0) {
-    result = result.filter(c => protocols.includes(c.split('://')[0].toLowerCase()));
-  }
-
-  if (customIPs.length > 0) {
-    const expanded = expandIPs(customIPs);
-    if (expanded.length > 0) {
-      const newConfigs = [];
-      for (const ip of expanded)
-        for (const config of result) {
-          const m = replaceConfigIP(config, ip);
-          if (m) newConfigs.push(m);
-        }
-      result = newConfigs;
+    for (let i = 0; i < count; i++) {
+      const ipInt = (networkInt + i) >>> 0;
+      const ip = [
+        (ipInt >>> 24) & 0xFF,
+        (ipInt >>> 16) & 0xFF,
+        (ipInt >>> 8)  & 0xFF,
+         ipInt         & 0xFF,
+      ].join('.');
+      result.push(ip);
     }
   }
-
   return result;
 }
 
-function replaceConfigIP(config, newIP) {
-  try {
-    const proto = config.split('://')[0].toLowerCase();
-    if (proto === 'vmess') {
-      const obj = JSON.parse(atob(config.slice(8)));
-      obj.add = newIP;
-      return 'vmess://' + btoa(JSON.stringify(obj));
-    }
-    const rest   = config.slice(proto.length + 3);
-    const atIdx  = rest.lastIndexOf('@');
-    if (atIdx === -1) return config;
-    const userInfo = rest.slice(0, atIdx);
-    const afterAt  = rest.slice(atIdx + 1);
-    let host, portAndRest;
-    if (afterAt.startsWith('[')) {
-      portAndRest = afterAt.slice(afterAt.indexOf(']') + 1);
-      host = newIP.includes(':') ? `[${newIP}]` : newIP;
-    } else {
-      const colonIdx = afterAt.indexOf(':');
-      if (colonIdx === -1) return config;
-      portAndRest = afterAt.slice(colonIdx);
-      host = newIP.includes(':') ? `[${newIP}]` : newIP;
-    }
-    return `${proto}://${userInfo}@${host}${portAndRest}`;
-  } catch (_) { return null; }
-}
+async function handlePrepare(request) {
+  const data = await request.json();
+  let rawText = "";
 
-function setConfigFragment(config, fragment) {
-  const hashIdx = config.lastIndexOf('#');
-  return (hashIdx === -1 ? config : config.slice(0, hashIdx)) + '#' + encodeURIComponent(fragment);
-}
+  if (data.subUrl) {
+    const res = await fetch(data.subUrl, { headers: { "User-Agent": "v2ray" } });
+    if (!res.ok) throw new Error("Fetch failed");
+    rawText = await res.text();
+    try {
+      if (!rawText.includes("://")) rawText = atob(rawText);
+    } catch (e) {}
+  } else if (data.rawConfigs) {
+    rawText = data.rawConfigs;
+  }
 
-function expandIPs(ipList) {
-  const result = [];
-  for (const entry of ipList) {
-    const clean = entry.trim();
-    if (!clean) continue;
-    if (clean.includes('/')) {
-      const [base, prefix] = clean.split('/');
-      const parts    = base.split('.').map(Number);
-      const hostBits = 32 - parseInt(prefix);
-      const count    = Math.min(Math.pow(2, hostBits) - 2, 254);
-      const baseNum  = (parts[0]<<24)|(parts[1]<<16)|(parts[2]<<8)|parts[3];
-      const netNum   = baseNum & ~((1 << hostBits) - 1);
-      for (let i = 1; i <= count; i++) {
-        const n = netNum + i;
-        result.push(`${(n>>24)&255}.${(n>>16)&255}.${(n>>8)&255}.${n&255}`);
+  const expandedIPs = (data.customIPs && data.customIPs.length > 0)
+    ? expandIPs(data.customIPs)
+    : [];
+
+  let configs = rawText.split('\n').filter(line => line.trim() !== '');
+  let parsedConfigs = [];
+
+  for (let raw of configs) {
+    raw = raw.trim();
+    if (!raw.includes("://")) continue;
+
+    const protocol = raw.split("://")[0].toLowerCase();
+    
+    if (data.protocols && data.protocols.length > 0) {
+       if (!data.protocols.includes(protocol)) continue;
+    }
+
+    let host = "", port = "443", name = "Unknown";
+    
+    try {
+       if (protocol === 'vmess') {
+         const vmessData = JSON.parse(atob(raw.replace('vmess://', '')));
+         host = vmessData.add || vmessData.sni || vmessData.host;
+         port = vmessData.port || "443";
+         name = decodeURIComponent(vmessData.ps || "vmess");
+       } else {
+         const urlObj = new URL(raw);
+         host = urlObj.hostname;
+         port = urlObj.port || "443";
+         name = decodeURIComponent(urlObj.hash.replace('#', '')) || protocol;
+       }
+    } catch (e) {
+       host = "error-parsing";
+    }
+
+    if (expandedIPs.length > 0) {
+      for (const ip of expandedIPs) {
+        let patchedRaw = raw;
+        if (protocol === 'vmess') {
+          try {
+            let vmessData = JSON.parse(atob(raw.replace('vmess://', '')));
+            vmessData.add = ip;
+            patchedRaw = 'vmess://' + btoa(JSON.stringify(vmessData));
+          } catch (e) {}
+        } else {
+          try {
+            const urlObj = new URL(raw);
+            urlObj.hostname = ip;
+            patchedRaw = urlObj.toString();
+          } catch (e) {}
+        }
+        parsedConfigs.push({ name, host: ip, port, raw: patchedRaw });
       }
     } else {
-      result.push(clean);
+      parsedConfigs.push({ name, host, port, raw });
     }
   }
-  return [...new Set(result)];
+
+  return new Response(JSON.stringify({ configs: parsedConfigs }), {
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" }
+  });
 }
 
-function encodeSubscription(configs) {
-  return btoa(unescape(encodeURIComponent(configs.join('\n'))));
-}
-
-function generateID() {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  const arr = new Uint8Array(8);
-  crypto.getRandomValues(arr);
-  return [...arr].map(b => chars[b % chars.length]).join('');
-}
-
-function maskConfig(config) {
-  try {
-    const proto = config.split('://')[0];
-    if (proto === 'vmess') {
-      const obj = JSON.parse(atob(config.slice(8)));
-      return { host: obj.add, port: obj.port, name: obj.ps || '' };
+async function handleCreate(request, env, origin) {
+  const data = await request.json();
+  let finalRaw = "";
+  
+  for (let i = 0; i < data.finalConfigs.length; i++) {
+    let raw = data.finalConfigs[i];
+    
+    if (data.renamePrefix) {
+       const prefix = data.renamePrefix + " " + (i + 1);
+       if (raw.startsWith('vmess://')) {
+         try {
+           let vmessData = JSON.parse(atob(raw.replace('vmess://', '')));
+           vmessData.ps = prefix;
+           raw = 'vmess://' + btoa(JSON.stringify(vmessData));
+         } catch(e){}
+       } else {
+         try {
+           const urlObj = new URL(raw);
+           urlObj.hash = encodeURIComponent(prefix);
+           raw = urlObj.toString();
+         } catch(e){}
+       }
     }
-    const url = new URL(config.replace(/^(\w+):\/\//, 'http://'));
-    return { host: url.hostname, port: url.port, name: decodeURIComponent(url.hash.slice(1) || '') };
-  } catch (_) { return { host: null, port: null, name: '' }; }
+    finalRaw += raw + "\n";
+  }
+
+  const id = Math.random().toString(36).substring(2, 10);
+  const subLink = origin + "/sub/" + id;
+  const ttl = data.ttl || 86400;
+  const base64Configs = btoa(finalRaw);
+
+  if (!env.JPL_KV) {
+      throw new Error("KV namespace 'JPL_KV' is missing");
+  }
+
+  await env.JPL_KV.put(id, base64Configs, { expirationTtl: ttl });
+
+  return new Response(JSON.stringify({
+    id,
+    subLink,
+    rawConfigs: finalRaw,
+    count: data.finalConfigs.length,
+    originalCount: data.originalCount,
+    expiresIn: ttl
+  }), {
+    headers: { ...CORS_HEADERS, "Content-Type": "application/json" }
+  });
 }
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+async function handleSub(request, env, pathname) {
+  const id = pathname.split("/sub/")[1];
+  if (!id) return new Response("Invalid ID", { status: 400, headers: CORS_HEADERS });
+
+  if (!env.JPL_KV) return new Response("KV not configured", { status: 500, headers: CORS_HEADERS });
+
+  const data = await env.JPL_KV.get(id);
+  if (!data) return new Response("Not found or expired", { status: 404, headers: CORS_HEADERS });
+
+  return new Response(data, {
+    headers: {
+      ...CORS_HEADERS,
+      "Content-Type": "text/plain; charset=utf-8"
+    }
+  });
 }
